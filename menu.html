@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>바론네트웍스 · 앱 메뉴</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Noto Sans KR', sans-serif;
+  background: #f4f6fb;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.logo {
+  font-size: 13px;
+  font-weight: 700;
+  color: #00b8a0;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+h1 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a2e4a;
+  margin-bottom: 6px;
+}
+.sub {
+  font-size: 13px;
+  color: #7a8499;
+  margin-bottom: 40px;
+}
+.cards {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.card {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(26,46,74,.10);
+  padding: 36px 32px;
+  width: 220px;
+  text-align: center;
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform .18s, box-shadow .18s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 32px rgba(26,46,74,.15);
+}
+.card-icon {
+  font-size: 48px;
+  line-height: 1;
+}
+.card-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1a2e4a;
+}
+.card-desc {
+  font-size: 12px;
+  color: #7a8499;
+  line-height: 1.6;
+}
+.card-btn {
+  margin-top: 6px;
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  border: none;
+}
+.card.mint .card-btn { background: #00b8a0; }
+.card.blue .card-btn { background: #3b82f6; }
+.card.mint { border-top: 4px solid #00b8a0; }
+.card.blue { border-top: 4px solid #3b82f6; }
+footer {
+  margin-top: 48px;
+  font-size: 12px;
+  color: #b8c0d0;
+}
+</style>
+</head>
+<body>
+  <div class="logo">Baron Networks</div>
+  <h1>바론네트웍스</h1>
+  <p class="sub">사용할 앱을 선택하세요</p>
+
+  <div class="cards">
+    <a class="card mint" href="index.html">
+      <div class="card-icon">📦</div>
+      <div class="card-title">소모품 관리</div>
+      <div class="card-desc">분원별 재고 현황<br>입고·불출·실사 기록</div>
+      <button class="card-btn">열기</button>
+    </a>
+    <a class="card blue" href="jangan-shuttle.html">
+      <div class="card-icon">🚌</div>
+      <div class="card-title">장안 셔틀</div>
+      <div class="card-desc">노선 최적화 및<br>탑승 현황 분석</div>
+      <button class="card-btn">열기</button>
+    </a>
+  </div>
+
+  <footer>© 바론네트웍스 · Baron Networks</footer>
+</body>
+</html>
