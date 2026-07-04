@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>분원 시설관리대장</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
   :root{
@@ -240,9 +242,18 @@
 
 <script>
 /* ===================== 설정 ===================== */
-const SUPABASE_URL = 'https://fauzcprystmkbvvxysdi.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZhdXpjcHJ5c3Rta2J2dnh5c2RpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4OTg0NDcsImV4cCI6MjA5ODQ3NDQ0N30.4B6Blhi_QEaf_fk465M2oLIytbE81ShTwPe-ZRU1-BQ';
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const firebaseConfig = {
+  apiKey: "AIzaSyACokruLFwbkCpxriOdQgVZAQfryYBmUxM",
+  authDomain: "baron-shuttle-ops.firebaseapp.com",
+  projectId: "baron-shuttle-ops",
+  storageBucket: "baron-shuttle-ops.firebasestorage.app",
+  messagingSenderId: "278466071248",
+  appId: "1:278466071248:web:e22df780d05e6b46772cd5"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const storage = firebase.storage();
+const FACILITY_COLLECTION = 'facility_log';
 
 // 총무팀 비밀번호 - 필요하면 이 값만 바꾸세요
 const ADMIN_PASSWORD = '2026';
@@ -251,7 +262,6 @@ const BRANCHES = ['장안','서수원','수원','운정1','운정2','남동탄']
 const CATEGORIES = ['전기/조명','냉난방','누수/배관','도장/벽지/바닥','가구/집기','청소/위생','보안/출입','인터넷/통신','기타'];
 const STATUSES = ['접수','처리중','보류','완료'];
 const OVERDUE_DAYS = 3;
-const PHOTO_BUCKET = 'facility-photos';
 
 let allMyRequests = [];
 let allAdminRequests = [];
@@ -340,11 +350,10 @@ function periodRange(){
 
 /* ===================== 분원: 등록 ===================== */
 async function uploadPhoto(file){
-  const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'_')}`;
-  const { error } = await sb.storage.from(PHOTO_BUCKET).upload(fileName, file);
-  if(error) throw error;
-  const { data } = sb.storage.from(PHOTO_BUCKET).getPublicUrl(fileName);
-  return data.publicUrl;
+  const fileName = `facility-photos/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'_')}`;
+  const ref = storage.ref().child(fileName);
+  await ref.put(file);
+  return await ref.getDownloadURL();
 }
 
 async function submitRequest(e){
@@ -367,10 +376,10 @@ async function submitRequest(e){
       request_content: document.getElementById('f_content').value,
       requester: document.getElementById('f_requester').value,
       status: '접수',
-      photo_url
+      photo_url,
+      created_at: firebase.firestore.FieldValue.serverTimestamp()
     };
-    const { error } = await sb.from('facility_log').insert(payload);
-    if(error) throw error;
+    await db.collection(FACILITY_COLLECTION).add(payload);
 
     setCloud('ok','저장됨');
     document.getElementById('registerForm').reset();
@@ -387,12 +396,22 @@ async function submitRequest(e){
 }
 
 /* ===================== 분원: 조회 ===================== */
+async function fetchAllFacilityRows(){
+  const snap = await db.collection(FACILITY_COLLECTION).get();
+  const rows = snap.docs.map(doc=>({ id: doc.id, ...doc.data() }));
+  rows.sort((a,b)=>{
+    if(a.created_date !== b.created_date) return a.created_date < b.created_date ? 1 : -1;
+    const at = a.created_at && a.created_at.toMillis ? a.created_at.toMillis() : 0;
+    const bt = b.created_at && b.created_at.toMillis ? b.created_at.toMillis() : 0;
+    return bt - at;
+  });
+  return rows;
+}
+
 async function loadMyRequests(){
   try{
     setCloud('loading','불러오는 중');
-    const { data, error } = await sb.from('facility_log').select('*').order('created_date',{ascending:false}).order('id',{ascending:false});
-    if(error) throw error;
-    allMyRequests = data || [];
+    allMyRequests = await fetchAllFacilityRows();
     setCloud('ok','연결됨');
     renderMyRequests();
   }catch(err){
@@ -472,9 +491,7 @@ function tryAdminLogin(){
 async function loadAdminRequests(){
   try{
     setCloud('loading','불러오는 중');
-    const { data, error } = await sb.from('facility_log').select('*').order('created_date',{ascending:false}).order('id',{ascending:false});
-    if(error) throw error;
-    allAdminRequests = data || [];
+    allAdminRequests = await fetchAllFacilityRows();
     setCloud('ok','연결됨');
     renderStats();
     renderAdminList();
@@ -527,7 +544,7 @@ function renderAdminList(){
   list.innerHTML = rows.map(r=>{
     const overdue = (r.status==='접수'||r.status==='처리중') && daysSince(r.created_date) >= OVERDUE_DAYS;
     return `
-    <div class="req-card ${overdue?'overdue':''}" onclick="openEditModal(${r.id})" style="cursor:pointer">
+    <div class="req-card ${overdue?'overdue':''}" onclick="openEditModal('${r.id}')" style="cursor:pointer">
       <div class="req-top">
         <div>
           <span class="req-cat">${r.category}</span>
@@ -575,8 +592,7 @@ async function saveEdit(){
     items_note: document.getElementById('e_items').value
   };
   try{
-    const { error } = await sb.from('facility_log').update(payload).eq('id', editingId);
-    if(error) throw error;
+    await db.collection(FACILITY_COLLECTION).doc(editingId).update(payload);
     closeEditModal();
     loadAdminRequests();
   }catch(err){
