@@ -148,11 +148,26 @@
     </div>
 
     <div class="card">
-      <h2>내 지점 요청 현황</h2>
+      <h2>요청 내역 조회</h2>
       <div class="filters">
+        <select id="viewBranchFilter" onchange="renderMyRequests()">
+          <option value="">전체 지점</option>
+        </select>
         <select id="myStatusFilter" onchange="renderMyRequests()">
           <option value="">전체 상태</option>
         </select>
+        <select id="periodFilter" onchange="onPeriodChange()">
+          <option value="all">전체 기간</option>
+          <option value="month">이번 달</option>
+          <option value="last1m">최근 1개월</option>
+          <option value="last3m">최근 3개월</option>
+          <option value="year">최근 1년</option>
+          <option value="custom">기간 직접 설정</option>
+        </select>
+      </div>
+      <div class="filters" id="customPeriodRow" style="display:none">
+        <input type="date" id="periodFrom" onchange="renderMyRequests()">
+        <input type="date" id="periodTo" onchange="renderMyRequests()">
       </div>
       <div id="myRequestsList"><div class="empty">불러오는 중...</div></div>
     </div>
@@ -164,6 +179,9 @@
       <div class="card">
         <h2>총무팀 비밀번호</h2>
         <input type="password" id="adminPw" placeholder="비밀번호 입력">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:400;margin-top:6px;">
+          <input type="checkbox" id="pwShowToggle" style="width:auto" onchange="document.getElementById('adminPw').type=this.checked?'text':'password'"> 비밀번호 보이기
+        </label>
         <button class="primary" style="width:100%" onclick="tryAdminLogin()">입장</button>
         <div id="loginErr" style="color:var(--danger);font-size:12px;margin-top:8px;"></div>
       </div>
@@ -227,7 +245,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // 총무팀 비밀번호 - 필요하면 이 값만 바꾸세요
-const ADMIN_PASSWORD = 'baron2026';
+const ADMIN_PASSWORD = '2026';
 
 const BRANCHES = ['장안','서수원','수원','운정1','운정2','남동탄'];
 const CATEGORIES = ['전기/조명','냉난방','누수/배관','도장/벽지/바닥','가구/집기','청소/위생','보안/출입','인터넷/통신','기타'];
@@ -249,6 +267,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
   fillSelect(document.getElementById('myBranch'), BRANCHES);
   fillSelect(document.getElementById('f_category'), CATEGORIES);
   fillSelect(document.getElementById('myStatusFilter'), STATUSES, '전체 상태');
+  fillSelect(document.getElementById('viewBranchFilter'), BRANCHES, '전체 지점');
   fillSelect(document.getElementById('af_branch'), BRANCHES, '전체 지점');
   fillSelect(document.getElementById('af_status'), STATUSES, '전체 상태');
   fillSelect(document.getElementById('af_category'), CATEGORIES, '전체 항목');
@@ -285,7 +304,39 @@ function switchTab(tab){
   if(tab==='admin' && isAdmin) loadAdminRequests();
 }
 
-function onBranchChange(){ renderMyRequests(); }
+function onBranchChange(){ /* 등록용 지점 선택 - 조회 필터와는 별개 */ }
+
+function onPeriodChange(){
+  const v = document.getElementById('periodFilter').value;
+  document.getElementById('customPeriodRow').style.display = v==='custom' ? 'flex' : 'none';
+  renderMyRequests();
+}
+
+function periodRange(){
+  const v = document.getElementById('periodFilter').value;
+  const today = new Date();
+  const fmt = d => d.toISOString().slice(0,10);
+  if(v==='month'){
+    const from = new Date(today.getFullYear(), today.getMonth(), 1);
+    return {from: fmt(from), to: todayStr()};
+  }
+  if(v==='last1m'){
+    const from = new Date(today); from.setMonth(from.getMonth()-1);
+    return {from: fmt(from), to: todayStr()};
+  }
+  if(v==='last3m'){
+    const from = new Date(today); from.setMonth(from.getMonth()-3);
+    return {from: fmt(from), to: todayStr()};
+  }
+  if(v==='year'){
+    const from = new Date(today); from.setFullYear(from.getFullYear()-1);
+    return {from: fmt(from), to: todayStr()};
+  }
+  if(v==='custom'){
+    return {from: document.getElementById('periodFrom').value, to: document.getElementById('periodTo').value};
+  }
+  return {from:'', to:''};
+}
 
 /* ===================== 분원: 등록 ===================== */
 async function uploadPhoto(file){
@@ -351,16 +402,19 @@ async function loadMyRequests(){
 }
 
 function renderMyRequests(){
-  const branch = document.getElementById('myBranch').value;
+  const branch = document.getElementById('viewBranchFilter').value;
   const statusF = document.getElementById('myStatusFilter').value;
+  const {from, to} = periodRange();
   const list = document.getElementById('myRequestsList');
-  if(!branch){ list.innerHTML = '<div class="empty">지점을 선택하면 요청 현황이 표시됩니다.</div>'; return; }
 
-  let rows = allMyRequests.filter(r=>r.branch===branch);
+  let rows = allMyRequests.slice();
+  if(branch) rows = rows.filter(r=>r.branch===branch);
   if(statusF) rows = rows.filter(r=>r.status===statusF);
-  if(!rows.length){ list.innerHTML = '<div class="empty">등록된 요청이 없습니다.</div>'; return; }
+  if(from) rows = rows.filter(r=>r.created_date >= from);
+  if(to) rows = rows.filter(r=>r.created_date <= to);
 
-  list.innerHTML = rows.map(r=>reqCardHtml(r,false)).join('');
+  if(!rows.length){ list.innerHTML = '<div class="empty">조건에 맞는 요청이 없습니다.</div>'; return; }
+  list.innerHTML = rows.map(r=>reqCardHtml(r, !branch)).join('');
 }
 
 function reqCardHtml(r, showBranch){
@@ -403,7 +457,7 @@ function showPhoto(url){
 
 /* ===================== 총무팀: 로그인 ===================== */
 function tryAdminLogin(){
-  const pw = document.getElementById('adminPw').value;
+  const pw = document.getElementById('adminPw').value.trim();
   if(pw === ADMIN_PASSWORD){
     isAdmin = true;
     document.getElementById('loginBox').style.display='none';
