@@ -2,8 +2,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>장안분원 셔틀 노선 최적화</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=8a3a366186ca2e7f70a53a60e624b719&autoload=false"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>*{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -856,9 +855,9 @@ body{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSys
         </div>
         <div class="mo" id="edit-tip">정류장 선택 후 지도 클릭 → 위치 이동</div>
         <div class="mo" id="map-style-bar">
-          <button class="msbtn active" onclick="setStyle('carto-voyager')">컬러</button>
-          <button class="msbtn" onclick="setStyle('stadia-smooth')">심플</button>
-          <button class="msbtn" onclick="setStyle('satellite')">위성</button>
+          <button class="msbtn active" onclick="setStyle('kakao-normal')">일반</button>
+          <button class="msbtn" onclick="setStyle('kakao-hybrid')">위성+라벨</button>
+          <button class="msbtn" onclick="setStyle('kakao-satellite')">위성</button>
         </div>
       </div>
     </div>
@@ -1090,7 +1089,8 @@ function togglePinMode(){
   const tip=document.getElementById('pin-mode-tip');
   if(btn)btn.classList.toggle('on',pinMode);
   if(tip)tip.classList.toggle('show',pinMode);
-  if(lmap)lmap.getContainer().style.cursor=pinMode?'crosshair':'';
+  const mapEl=document.getElementById('map');
+  if(mapEl)mapEl.style.cursor=pinMode?'crosshair':'';
 }
 
 function openPinModal(lat,lng,editIdx){
@@ -1183,21 +1183,29 @@ function deleteCurrentPin(){
 
 let pinLayers=[];
 function renderPins(){
-  pinLayers.forEach(l=>{try{lmap.removeLayer(l);}catch(e){}});
+  pinLayers.forEach(l=>{try{l.setMap(null);}catch(e){}});
   pinLayers=[];
   if(!lmap)return;
   PINS.forEach((p,idx)=>{
     const sz=PIN_SIZES[p.size]||30;
-    const html=`<div style="cursor:pointer;display:flex;flex-direction:column;align-items:center">
+    const overlayId=`pin-ov-${idx}`;
+    const html=`<div id="${overlayId}" style="cursor:pointer;display:flex;flex-direction:column;align-items:center">
       ${renderPinHTML(p.name,p.color,sz,false)}
     </div>`;
-    const icon=L.divIcon({html,className:'',iconSize:[Math.max(sz*4,120),sz*2+30],iconAnchor:[Math.max(sz*2,60),sz+28]});
-    const mk=L.marker([p.lat,p.lng],{icon,zIndexOffset:2000,interactive:true}).addTo(lmap);
-    mk.on('click',e=>{
-      L.DomEvent.stopPropagation(e);
-      openPinModal(p.lat,p.lng,idx);
+    const overlay=new kakao.maps.CustomOverlay({
+      position:new kakao.maps.LatLng(p.lat,p.lng),
+      content:html,xAnchor:0.5,yAnchor:1,zIndex:2000
     });
-    pinLayers.push(mk);
+    overlay.setMap(lmap);
+    pinLayers.push(overlay);
+    setTimeout(()=>{
+      const el=document.getElementById(overlayId);
+      if(!el)return;
+      el.addEventListener('click',ev=>{
+        ev.stopPropagation();
+        openPinModal(p.lat,p.lng,idx);
+      });
+    },0);
   });
 }
 
@@ -1241,13 +1249,12 @@ let selectedSnap=null;
 
 let curPanel='map',curBus='ALL',editMode=false,editBus=null,editId=null;
 let bubbleMode='total'; // 'total'=전체고유이용자, 'stop'=정류장별탑승수
-let lmap=null,lLayers=[],tileL=null,curStyle='carto-voyager';
+let lmap=null,lLayers=[],curStyle='kakao-normal';
 
-const TILES={
-  'carto-light':{url:'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',attr:'© OpenStreetMap © CARTO'},
-  'carto-voyager':{url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',attr:'© OpenStreetMap © CARTO'},
-  'stadia-smooth':{url:'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',attr:'© OpenStreetMap © CARTO'},
-  'satellite':{url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',attr:'© Esri'}
+const KAKAO_MAPTYPE={
+  'kakao-normal':null,
+  'kakao-satellite':'SKYVIEW',
+  'kakao-hybrid':'HYBRID'
 };
 
 function rc(r){return r>=90?'#34C759':r>=70?'#FF9500':'#FF3B30';}
@@ -1261,7 +1268,7 @@ function showPanel(p){
   document.querySelectorAll('.mtab')[['map','dash','sim','ba','rsim'].indexOf(p)].classList.add('active');
   document.getElementById('side').style.display=p==='map'?'flex':'none';
   if(p==='map'){
-    setTimeout(()=>{if(lmap){lmap.invalidateSize();renderMap();}},80);
+    setTimeout(()=>{if(lmap){lmap.relayout();renderMap();}},80);
     buildSide();buildFbar('fbar-map');
   }
   if(p==='dash'){buildFbar('fbar-dash');renderDash();}
@@ -1542,33 +1549,38 @@ function updTot(){
 
 // ═══════════════ 지도 ═══════════════
 function initMap(){
-  // Leaflet은 #map 요소가 화면에 보여야 초기화 가능 → DOMContentLoaded 후 실행
-  lmap=L.map('map',{zoomControl:true,preferCanvas:false}).setView([37.295,127.005],13);
-  setStyle('carto-voyager');
-  lmap.on('click',e=>{
-    // 핀 모드일 때 핀 추가
-    if(pinMode){openPinModal(e.latlng.lat,e.latlng.lng);return;}
-    if(!editMode||!editBus||!editId)return;
-    const s=(LL[editBus]||[]).find(x=>x.id===editId);
-    if(s){s.lat=parseFloat(e.latlng.lat.toFixed(6));s.lng=parseFloat(e.latlng.lng.toFixed(6));}
-    const ids=(LL[editBus]||[]).map(x=>x.id);const idx=ids.indexOf(editId);
-    if(idx<ids.length-1){editId=ids[idx+1];hlRow();}
-    else{editId=null;editBus=null;document.getElementById('edit-tip').classList.remove('show');hlRow();}
-    buildSide();renderMap();
+  kakao.maps.load(()=>{
+    lmap=new kakao.maps.Map(document.getElementById('map'),{
+      center:new kakao.maps.LatLng(37.295,127.005),
+      level:6
+    });
+    setStyle('kakao-normal');
+    kakao.maps.event.addListener(lmap,'click',e=>{
+      const lat=e.latLng.getLat(), lng=e.latLng.getLng();
+      // 핀 모드일 때 핀 추가
+      if(pinMode){openPinModal(lat,lng);return;}
+      if(!editMode||!editBus||!editId)return;
+      const s=(LL[editBus]||[]).find(x=>x.id===editId);
+      if(s){s.lat=parseFloat(lat.toFixed(6));s.lng=parseFloat(lng.toFixed(6));}
+      const ids=(LL[editBus]||[]).map(x=>x.id);const idx=ids.indexOf(editId);
+      if(idx<ids.length-1){editId=ids[idx+1];hlRow();}
+      else{editId=null;editBus=null;document.getElementById('edit-tip').classList.remove('show');hlRow();}
+      buildSide();renderMap();
+    });
+    buildLegend();
+    buildFbar('fbar-map');
+    buildSide();
+    renderMap();
+    renderPins();
   });
-  buildLegend();
-  buildFbar('fbar-map');
-  buildSide();
-  renderMap();
 }
 
 function setStyle(s){
   curStyle=s;
   document.querySelectorAll('.msbtn').forEach(b=>b.classList.toggle('active',b.getAttribute('onclick').includes(s)));
   if(!lmap)return;
-  if(tileL)lmap.removeLayer(tileL);
-  const t=TILES[s];
-  tileL=L.tileLayer(t.url,{attribution:t.attr,maxZoom:19}).addTo(lmap);
+  const t=KAKAO_MAPTYPE[s];
+  lmap.setMapTypeId(t?kakao.maps.MapTypeId[t]:kakao.maps.MapTypeId.ROADMAP);
 }
 
 function setBubbleMode(mode){
@@ -1590,7 +1602,7 @@ function setBubbleMode(mode){
 
 function renderMap(){
   if(!lmap)return;
-  lLayers.forEach(l=>lmap.removeLayer(l));lLayers=[];
+  lLayers.forEach(l=>{try{l.setMap(null);}catch(e){}});lLayers=[];
   const buses=curBus==='ALL'?BUS_IDS:[curBus];
   buses.forEach(b=>{
     const stops=LL[b]||[];const col=COLORS[b];
@@ -1606,7 +1618,11 @@ function renderMap(){
         ))
       : stops.filter(s=>s.lat!=null&&s.lng!=null);
     if(plStops.length>1){
-      const pl=L.polyline(plStops.map(s=>[s.lat,s.lng]),{color:col,weight:3,opacity:.75,dashArray:'7,4'}).addTo(lmap);
+      const pl=new kakao.maps.Polyline({
+        path:plStops.map(s=>new kakao.maps.LatLng(s.lat,s.lng)),
+        strokeWeight:3,strokeColor:col,strokeOpacity:.75,strokeStyle:'shortdash'
+      });
+      pl.setMap(lmap);
       lLayers.push(pl);
     }
     stops.forEach(s=>{
@@ -1626,15 +1642,20 @@ function renderMap(){
       const inner=isZero?'':(n>0?n:(isSel?'📍':s.id));
       const bdr=isSel?'3px solid #e74c3c':(isZero?'1.5px solid rgba(255,255,255,.4)':'2.5px solid #fff');
       const opacity=isZero?0.35:1;
-      const html=`<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${col};border:${bdr};display:flex;align-items:center;justify-content:center;font-size:${Math.max(8,Math.round(sz*.33))}px;font-weight:700;color:#fff;box-shadow:0 2px 6px rgba(0,0,0,.35);margin-left:${-sz/2}px;margin-top:${-sz/2}px;opacity:${opacity}">${inner}</div>`;
-      const icon=L.divIcon({html,className:'',iconSize:[sz,sz],iconAnchor:[sz/2,sz/2]});
+      const overlayId=`bubble-${b}-${s.id}`;
+      const html=`<div id="${overlayId}" style="cursor:pointer;width:${sz}px;height:${sz}px;border-radius:50%;background:${col};border:${bdr};display:flex;align-items:center;justify-content:center;font-size:${Math.max(8,Math.round(sz*.33))}px;font-weight:700;color:#fff;box-shadow:0 2px 6px rgba(0,0,0,.35);opacity:${opacity}">${inner}</div>`;
+      const pos=new kakao.maps.LatLng(s.lat,s.lng);
+      const overlay=new kakao.maps.CustomOverlay({position:pos,content:html,xAnchor:0.5,yAnchor:0.5,zIndex:10});
+      overlay.setMap(lmap);
+      lLayers.push(overlay);
+
       const stopU=(STOP_UNIQUE[b]&&STOP_UNIQUE[b][String(s.id)])||0;
       const otherBuses=BUS_IDS.filter(x=>x!==b);
       let popHtml;
       if(routeSimMode){
         // 노선조정 모드: 통째 이동 + 분할 이동 모두 제공
         const moveOpts=otherBuses.map(x=>`<option value="${x}">${x}호로 이동</option>`).join('');
-        popHtml=`<div style="font-size:13px;font-weight:700;margin-bottom:4px">${b}호 ${s.id}번 정류장</div>${sn?`<div style="font-size:11px;color:#666;margin-bottom:6px">${sn}</div>`:''}<div style="font-size:12px;margin-bottom:8px">고유 이용자: <b style="color:#3B82F6">${stopU}명</b></div>
+        popHtml=`<div style="padding:8px;min-width:180px"><div style="font-size:13px;font-weight:700;margin-bottom:4px">${b}호 ${s.id}번 정류장</div>${sn?`<div style="font-size:11px;color:#666;margin-bottom:6px">${sn}</div>`:''}<div style="font-size:12px;margin-bottom:8px">고유 이용자: <b style="color:#3B82F6">${stopU}명</b></div>
         <div style="display:flex;gap:4px;margin-bottom:6px">
           <select id="move-sel-${b}-${s.id}" style="flex:1;font-size:11px;padding:3px 5px;border-radius:5px;border:1px solid #ccc">
             <option value="">통째로 이동...</option>
@@ -1642,14 +1663,20 @@ function renderMap(){
           </select>
           <button onclick="quickMoveStop('${b}',${s.id})" style="font-size:11px;padding:3px 8px;border-radius:5px;border:none;background:#3B82F6;color:#fff;cursor:pointer">이동</button>
         </div>
-        ${stopU>0&&otherBuses.length?`<button onclick="openSplitModal('${b}',${s.id})" style="width:100%;font-size:11px;padding:5px;border-radius:5px;border:1px solid #3B82F6;background:#fff;color:#3B82F6;cursor:pointer">↔️ 인원 나눠서 이동 (분할)</button>`:''}`;
+        ${stopU>0&&otherBuses.length?`<button onclick="openSplitModal('${b}',${s.id})" style="width:100%;font-size:11px;padding:5px;border-radius:5px;border:1px solid #3B82F6;background:#fff;color:#3B82F6;cursor:pointer">↔️ 인원 나눠서 이동 (분할)</button>`:''}</div>`;
       } else {
-        const moveOpts=otherBuses.map(x=>`<option value="${x}">${x}호로 이동</option>`).join('');
-        popHtml=`<div style="font-size:13px;font-weight:700;margin-bottom:4px">${b}호 ${s.id}번 정류장</div>${sn?`<div style="font-size:11px;color:#666;margin-bottom:6px">${sn}</div>`:''}<div style="font-size:12px">고유 이용자: <b style="color:#3B82F6">${stopU}명</b></div>`;
+        popHtml=`<div style="padding:8px;min-width:160px"><div style="font-size:13px;font-weight:700;margin-bottom:4px">${b}호 ${s.id}번 정류장</div>${sn?`<div style="font-size:11px;color:#666;margin-bottom:6px">${sn}</div>`:''}<div style="font-size:12px">고유 이용자: <b style="color:#3B82F6">${stopU}명</b></div></div>`;
       }
-      const mk=L.marker([s.lat,s.lng],{icon}).bindPopup(popHtml).addTo(lmap);
-      mk.on('click',()=>{if(editMode){editBus=b;editId=s.id;hlRow();}});
-      lLayers.push(mk);
+      const infowindow=new kakao.maps.InfoWindow({position:pos,content:popHtml,removable:true});
+      setTimeout(()=>{
+        const el=document.getElementById(overlayId);
+        if(!el)return;
+        el.addEventListener('click',ev=>{
+          ev.stopPropagation();
+          if(editMode){editBus=b;editId=s.id;hlRow();buildSide();renderMap();return;}
+          infowindow.open(lmap);
+        });
+      },0);
     });
   });
 }
