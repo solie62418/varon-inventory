@@ -6,6 +6,8 @@
 <title>소모품 관리 · 바론네트웍스</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -159,6 +161,11 @@ select{cursor:pointer;}
   <div class="sidebar-logo">
     <div class="logo-tag">Inventory</div>
     <div class="logo-title">바론네트웍스<br>소모품 관리</div>
+    <div style="display:flex;align-items:center;gap:6px;margin-top:10px">
+      <span id="cloud-dot" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:#8895A7"></span>
+      <span id="cloud-text" style="font-size:10.5px;color:rgba(255,255,255,.55)">대기 중</span>
+      <button onclick="cloudSave()" title="지금 바로 서버에 저장" style="margin-left:auto;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:10.5px;padding:3px 8px;border-radius:6px;cursor:pointer">☁️ 저장</button>
+    </div>
   </div>
   <nav class="nav">
     <div class="nav-group">
@@ -516,8 +523,74 @@ function loadDB() {
     initFromSnapshot();
   }
 }
-function saveDB() { localStorage.setItem('baron_inv_v6', JSON.stringify(DB)); }
+function saveDB() {
+  localStorage.setItem('baron_inv_v6', JSON.stringify(DB));
+  scheduleCloudSave();
+}
 function uid() { return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+
+// ─── 클라우드 저장(서버 동기화) ───────────────────────────
+const firebaseConfig={
+  apiKey:"AIzaSyACokruLFwbkCpxriOdQgVZAQfryYBmUxM",
+  authDomain:"baron-shuttle-ops.firebaseapp.com",
+  projectId:"baron-shuttle-ops",
+  storageBucket:"baron-shuttle-ops.firebasestorage.app",
+  messagingSenderId:"278466071248",
+  appId:"1:278466071248:web:e22df780d05e6b46772cd5"
+};
+firebase.initializeApp(firebaseConfig);
+const fdb=firebase.firestore();
+const CLOUD_DOC_ID='inventory';
+
+function setCloudStatus(state,text){
+  const dot=document.getElementById('cloud-dot');
+  const txt=document.getElementById('cloud-text');
+  if(dot)dot.style.background=state==='ok'?'#34C759':state==='err'?'#FF3B30':state==='loading'?'#FF9500':'#8895A7';
+  if(txt)txt.textContent=text;
+}
+
+let cloudSaveTimer=null;
+function scheduleCloudSave(){
+  if(cloudSaveTimer)clearTimeout(cloudSaveTimer);
+  cloudSaveTimer=setTimeout(cloudSave,1500);
+}
+
+async function cloudSave(){
+  try{
+    setCloudStatus('loading','저장 중');
+    await fdb.collection('inventory_backup').doc(CLOUD_DOC_ID).set({
+      db:DB, updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    setCloudStatus('ok','저장됨');
+  }catch(err){
+    console.error(err);
+    setCloudStatus('err','저장 실패');
+  }
+}
+
+async function cloudLoad(){
+  try{
+    setCloudStatus('loading','불러오는 중');
+    const snap=await fdb.collection('inventory_backup').doc(CLOUD_DOC_ID).get();
+    if(!snap.exists){
+      setCloudStatus('ok','연결됨');
+      await cloudSave();
+      return;
+    }
+    const d=snap.data();
+    if(d.db){
+      DB=d.db;
+      if(!DB.alertThresh)DB.alertThresh={...DEFAULT_ALERT};
+      if(!DB.radarThresh)DB.radarThresh={...DEFAULT_RADAR};
+      localStorage.setItem('baron_inv_v6',JSON.stringify(DB));
+      renderDashboard();updateInventorySnapshotOptions();
+    }
+    setCloudStatus('ok','연결됨');
+  }catch(err){
+    console.error(err);
+    setCloudStatus('err','연결 실패');
+  }
+}
 
 function pushUndo() {
   UNDO_STACK.push(JSON.stringify(DB));
@@ -1610,7 +1683,7 @@ function setTodayBadge(){
 }
 
 // ─── Boot ─────────────────────────────────────────────────
-loadDB(); initSelects(); setTodayBadge(); renderDashboard(); updateInventorySnapshotOptions();
+loadDB(); initSelects(); setTodayBadge(); renderDashboard(); updateInventorySnapshotOptions(); cloudLoad();
 ['audit-modal','edit-modal','thresh-modal'].forEach(id=>{
   document.getElementById(id).addEventListener('click',function(e){if(e.target===this)closeModal(id);});
 });
