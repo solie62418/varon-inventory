@@ -3,6 +3,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>장안분원 셔틀 노선 최적화</title>
 <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=8a3a366186ca2e7f70a53a60e624b719&autoload=false"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>*{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -813,6 +815,8 @@ body{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSys
   <button class="mtab" onclick="showPanel('ba')">📈 탑승률 추이</button>
   <button class="mtab" onclick="showPanel('rsim')">🔀 노선 시뮬레이션</button>
   <button id="pin-toggle-btn" onclick="togglePinMode()">📍 핀</button><button id="save-btn" onclick="exportData()" title="정류장 데이터를 JSON 파일로 백업">💾 백업</button>
+  <button id="cloud-save-btn" onclick="cloudSave()" title="지금 바로 서버에 저장">☁️ 서버 저장</button>
+  <span style="display:inline-flex;align-items:center;gap:5px;margin:0 8px;font-size:11px;color:#94A3B8"><span id="cloud-dot" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:#8895A7"></span><span id="cloud-text">대기 중</span></span>
   <button id="import-btn" onclick="document.getElementById('import-input').click()" title="JSON 백업 파일 불러오기">📂 복원</button>
   <button id="share-btn" onclick="shareFile()" title="데이터가 포함된 공유용 HTML 파일 생성">📤 공유</button>
   <input type="file" id="import-input" accept=".json" style="display:none" onchange="importData(this)">
@@ -2778,6 +2782,67 @@ function saveToLS(){
   localStorage.setItem('names',JSON.stringify(NAMES));
   localStorage.setItem('cnt',JSON.stringify(CNT));
 }
+
+// ═══════════════ 클라우드 저장(서버 동기화) ═══════════════
+const firebaseConfig={
+  apiKey:"AIzaSyACokruLFwbkCpxriOdQgVZAQfryYBmUxM",
+  authDomain:"baron-shuttle-ops.firebaseapp.com",
+  projectId:"baron-shuttle-ops",
+  storageBucket:"baron-shuttle-ops.firebasestorage.app",
+  messagingSenderId:"278466071248",
+  appId:"1:278466071248:web:e22df780d05e6b46772cd5"
+};
+firebase.initializeApp(firebaseConfig);
+const fdb=firebase.firestore();
+const CLOUD_DOC_ID='jangan'; // 분원별로 다른 파일은 다른 id 사용
+
+function setCloudStatus(state,text){
+  const dot=document.getElementById('cloud-dot');
+  const txt=document.getElementById('cloud-text');
+  if(dot)dot.className=state;
+  if(txt)txt.textContent=text;
+}
+
+async function cloudSave(){
+  try{
+    setCloudStatus('loading','저장 중');
+    const payload={
+      busIds:BUS_IDS, ll:LL, names:NAMES, cnt:CNT,
+      dataLabel:DATA_LABEL, snaps:SNAPS,
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    };
+    await fdb.collection('shuttle_backup').doc(CLOUD_DOC_ID).set(payload);
+    setCloudStatus('ok','저장됨');
+  }catch(err){
+    console.error(err);
+    setCloudStatus('err','저장 실패');
+  }
+}
+
+async function cloudLoad(){
+  try{
+    setCloudStatus('loading','불러오는 중');
+    const snap=await fdb.collection('shuttle_backup').doc(CLOUD_DOC_ID).get();
+    if(!snap.exists){
+      // 서버에 아직 데이터가 없으면 지금 로컬 데이터를 최초 업로드
+      setCloudStatus('ok','연결됨');
+      await cloudSave();
+      return;
+    }
+    const d=snap.data();
+    if(d.ll)Object.assign(LL,d.ll);
+    if(d.names)Object.assign(NAMES,d.names);
+    if(d.cnt)Object.assign(CNT,d.cnt);
+    if(d.dataLabel)DATA_LABEL=d.dataLabel;
+    if(d.snaps){SNAPS.length=0;d.snaps.forEach(s=>SNAPS.push(s));}
+    saveToLS();
+    buildSide();buildFbar('fbar-map');buildFbar('fbar-dash');buildLegend();renderMap();
+    setCloudStatus('ok','연결됨');
+  }catch(err){
+    console.error(err);
+    setCloudStatus('err','연결 실패');
+  }
+}
 function shareFile(){
   saveToLS();
   // 현재 HTML 소스에 데이터를 직접 삽입
@@ -2858,6 +2923,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   cloudLoad();
   setInterval(()=>{
     saveToLS();
+    cloudSave();
     const el=document.getElementById('side-autosave');
     if(el){const t=new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});el.textContent='✓ 자동저장 '+t;}
   },30000);
