@@ -813,7 +813,7 @@ body{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSys
   <button class="mtab" onclick="showPanel('dash')">현황</button>
   <button class="mtab" onclick="showPanel('sim')">감차시뮬</button>
   <button class="mtab" onclick="showPanel('ba')">📈 탑승률 추이</button>
-  <button class="mtab" onclick="showPanel('rsim')">🔀 노선 시뮬레이션</button>
+  <button class="mtab" onclick="showPanel('rsim')">🗺️ 노선·소요시간</button>
   <button id="pin-toggle-btn" onclick="togglePinMode()">📍 핀</button><button id="save-btn" onclick="exportData()" title="정류장 데이터를 JSON 파일로 백업">💾 백업</button>
   <button id="cloud-save-btn" onclick="cloudSave()" title="지금 바로 서버에 저장">☁️ 서버 저장</button>
   <span style="display:inline-flex;align-items:center;gap:5px;margin:0 8px;font-size:11px;color:#94A3B8"><span id="cloud-dot" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:#8895A7"></span><span id="cloud-text">대기 중</span></span>
@@ -2403,42 +2403,56 @@ function renderRouteSim(){
   const el=document.getElementById('rsim-panel');
   const capCheck=checkCapacity();
 
-  // 현재 상태 요약
-  let curSummary=`<div class="ds"><h2>🔀 노선 시뮬레이션</h2>
-    <h3 style="font-size:12px;color:var(--mut);margin-bottom:14px">
-      호차를 폐지하고 정류장을 다른 노선에 재배치한 뒤, 결과를 시나리오로 저장해 비교해보세요
-    </h3>
-
-    <div style="background:var(--surfH);border:1px solid var(--bdr);border-radius:10px;padding:14px;margin-bottom:14px">
-      <div style="font-size:12px;font-weight:700;color:var(--accL);margin-bottom:10px">현재 화면 상태</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px">
-        ${BUS_IDS.map(b=>{
-          const cc=capCheck[b];
-          const stopCnt=(LL[b]||[]).length;
-          return `<div style="background:var(--surf);border-radius:7px;padding:6px 8px;border-left:3px solid ${COLORS[b]}${cc.over?';border:1px solid #FF3B30':''}">
-            <div style="font-size:10px;font-weight:700;color:${COLORS[b]}">${b}호</div>
-            <div style="font-size:11px;color:var(--mut)">정류장 ${stopCnt}개</div>
-            ${cc.over?'<div style="font-size:9px;color:#FF3B30;font-weight:700">⚠️ 정원초과</div>':''}
-          </div>`;
-        }).join('')}
-      </div>
+  // ── 소요시간 계산 섹션 ──
+  const timeSection=`
+  <div class="ds">
+    <h2>⏱️ 노선 소요시간 계산</h2>
+    <p style="font-size:11px;color:var(--mut);margin-bottom:14px">호차를 선택하면 정류장 순서대로 카카오 지도 기준 소요시간을 계산합니다. 정류장 순서를 바꾼 뒤 재계산해 Before/After를 비교할 수 있습니다.</p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+      <select id="time-bus-sel" style="padding:8px 12px;border-radius:8px;border:1.5px solid var(--bdr);background:var(--surf);color:var(--txt);font-size:13px;font-weight:600">
+        ${BUS_IDS.map(b=>`<option value="${b}">${b}호 (정류장 ${(LL[b]||[]).filter(s=>s.lat&&s.lng).length}개 좌표등록)</option>`).join('')}
+      </select>
+      <button onclick="calcRouteTime()" style="padding:8px 18px;border-radius:8px;border:none;background:var(--acc);color:#fff;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,122,255,.3)">
+        🗺️ 소요시간 계산
+      </button>
+      <span style="font-size:11px;color:var(--mut)">* 카카오 모빌리티 API 사용 · 실도로 기준</span>
     </div>
+    <div id="time-result" style="background:var(--bg);border-radius:10px;padding:14px;min-height:60px;font-size:12px;color:var(--mut)">
+      호차를 선택하고 계산 버튼을 누르세요.
+    </div>
+  </div>`;
 
-    <div class="ba-ctl-btns" style="margin-bottom:14px">
+  // ── 현재 상태 요약 ──
+  let curSummary=`
+  <div class="ds">
+    <h2>🔀 호차 폐지 시뮬레이션</h2>
+    <p style="font-size:11px;color:var(--mut);margin-bottom:14px">호차를 폐지하고 정류장을 다른 노선에 재배치한 뒤, 결과를 시나리오로 저장해 비교해보세요.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px;margin-bottom:14px">
+      ${BUS_IDS.map(b=>{
+        const cc=capCheck[b];
+        const stopCnt=(LL[b]||[]).length;
+        return `<div style="background:var(--surf);border-radius:7px;padding:6px 8px;border-left:3px solid ${COLORS[b]}${cc.over?';outline:1.5px solid #FF3B30':''}">
+          <div style="font-size:10px;font-weight:700;color:${COLORS[b]}">${b}호</div>
+          <div style="font-size:11px;color:var(--mut)">정류장 ${stopCnt}개</div>
+          ${cc.over?'<div style="font-size:9px;color:#FF3B30;font-weight:700">⚠️ 정원초과</div>':''}
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="ba-btn primary" onclick="openRetireModal()">🚫 호차 폐지 모드</button>
       <button class="ba-btn" onclick="saveRouteScenario()">💾 현재 노선안 저장</button>
     </div>
   </div>`;
 
-  // 저장된 시나리오 목록
+  // ── 저장된 시나리오 목록 ──
   let scenarioList='';
   if(RSIM_SCENARIOS.length){
-    scenarioList=`<div class="ds" style="margin-top:16px"><h2>📂 저장된 노선안 (${RSIM_SCENARIOS.length}개)</h2>
+    scenarioList=`<div class="ds"><h2>📂 저장된 노선안 (${RSIM_SCENARIOS.length}개)</h2>
       <div style="display:flex;flex-direction:column;gap:8px">
         ${RSIM_SCENARIOS.map((sc,i)=>{
           const d=new Date(sc.ts);
           const totalStops=Object.values(sc.ll).reduce((s,arr)=>s+arr.length,0);
-          return `<div style="background:var(--surfH);border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px">
+          return `<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px">
             <div style="flex:1">
               <div style="font-size:13px;font-weight:700">${sc.name}</div>
               <div style="font-size:11px;color:var(--mut)">${sc.busIds.length}개 호차 · 정류장 ${totalStops}개 · ${d.getMonth()+1}/${d.getDate()} 저장</div>
@@ -2451,7 +2465,127 @@ function renderRouteSim(){
     </div>`;
   }
 
-  el.innerHTML=curSummary+scenarioList;
+  el.innerHTML=timeSection+curSummary+scenarioList;
+}
+
+// ── 카카오 모빌리티 소요시간 계산 ──
+// 학원 위치 (장안분원) - 기본값
+const ACADEMY_LAT=37.3023; // 수원시 장안구 대평로 80
+const ACADEMY_LNG=127.0228; // 수원시 장안구 대평로 80
+
+async function calcRouteTime(){
+  const bus=document.getElementById('time-bus-sel').value;
+  const stops=(LL[bus]||[]).filter(s=>s.lat&&s.lng);
+  const el=document.getElementById('time-result');
+
+  if(stops.length<2){
+    el.innerHTML='<span style="color:#FF3B30">⚠️ 좌표가 등록된 정류장이 2개 이상 필요합니다.<br>지도 탭에서 편집모드로 정류장 위치를 먼저 등록해주세요.</span>';
+    return;
+  }
+
+  el.innerHTML='<div style="text-align:center;padding:20px;color:var(--mut)">⏳ 카카오 경로 계산 중...</div>';
+
+  // 구간별 소요시간 계산 (정류장 → 다음 정류장)
+  // 캐시 키: 출발-도착 좌표
+  const CACHE_KEY='route_time_cache';
+  let cache={};
+  try{ cache=JSON.parse(localStorage.getItem(CACHE_KEY)||'{}'); }catch(e){}
+
+  const segments=[];
+  // 전체 경로: 첫 정류장 → ... → 마지막 정류장 → 학원
+  const allPoints=[...stops, {lat:ACADEMY_LAT,lng:ACADEMY_LNG,name:'바론 장안분원(대평로 80)'}];
+
+  let totalSec=0;
+  let hasError=false;
+
+  for(let i=0;i<allPoints.length-1;i++){
+    const from=allPoints[i];
+    const to=allPoints[i+1];
+    const cacheKey=`${from.lat.toFixed(5)},${from.lng.toFixed(5)}-${to.lat.toFixed(5)},${to.lng.toFixed(5)}`;
+
+    let duration=null;
+    let distance=null;
+    let fromCache=false;
+
+    if(cache[cacheKey]){
+      duration=cache[cacheKey].duration;
+      distance=cache[cacheKey].distance;
+      fromCache=true;
+    } else {
+      // 카카오 모빌리티 다중 경유지 Direction API
+      try{
+        const url=`https://apis-navi.kakaomobility.com/v1/directions?origin=${from.lng},${from.lat}&destination=${to.lng},${to.lat}&priority=RECOMMEND&car_type=2`;
+        const res=await fetch(url,{
+          headers:{
+            'Authorization':`KakaoAK 8a3a366186ca2e7f70a53a60e624b719`,
+            'Content-Type':'application/json'
+          }
+        });
+        if(res.ok){
+          const data=await res.json();
+          if(data.routes&&data.routes[0]&&data.routes[0].summary){
+            duration=data.routes[0].summary.duration; // 초
+            distance=data.routes[0].summary.distance; // 미터
+            cache[cacheKey]={duration,distance};
+          }
+        }
+      }catch(e){
+        console.warn('카카오 API 오류',e);
+      }
+    }
+
+    const fromName=from.name||(NAMES[bus]&&NAMES[bus][from.id])||`정류장${i+1}`;
+    const toName=to.name||(to===allPoints[allPoints.length-1]?'학원':((NAMES[bus]&&NAMES[bus][to.id])||`정류장${i+2}`));
+
+    segments.push({fromName,toName,duration,distance,fromCache});
+    if(duration) totalSec+=duration;
+    else hasError=true;
+  }
+
+  // 캐시 저장
+  try{ localStorage.setItem(CACHE_KEY,JSON.stringify(cache)); }catch(e){}
+
+  // 결과 렌더링
+  const totalMin=Math.floor(totalSec/60);
+  const totalKm=(segments.reduce((s,sg)=>s+(sg.distance||0),0)/1000).toFixed(1);
+
+  const overLimit=totalMin>40;
+  const statusColor=overLimit?'#FF3B30':totalMin>30?'#FF9500':'#34C759';
+  const statusText=overLimit?'⚠️ 운행시간 초과':'✅ 정상 범위';
+
+  let html=`
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap">
+      <div style="text-align:center;background:var(--surf);border-radius:10px;padding:12px 18px;border:2px solid ${statusColor}">
+        <div style="font-size:10px;font-weight:700;color:var(--mut);margin-bottom:3px">총 예상 소요시간</div>
+        <div style="font-size:26px;font-weight:800;color:${statusColor}">${totalMin}분</div>
+        <div style="font-size:11px;color:var(--mut)">${totalKm}km · ${statusText}</div>
+      </div>
+      <div style="font-size:11px;color:var(--mut);line-height:1.7">
+        · ${bus}호 노선: 정류장 ${stops.length}개<br>
+        · ${hasError?'<span style="color:#FF9500">일부 구간 계산 실패 (좌표 확인 필요)</span>':'실도로 기준 계산 완료'}<br>
+        · 등원 방향 (첫 정류장 → 학원) 기준
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:6px;padding:5px 8px;font-size:10px;font-weight:700;color:var(--mut);border-bottom:1px solid var(--bdr)">
+        <span>출발</span><span>도착</span><span style="text-align:right">소요</span><span style="text-align:right">거리</span>
+      </div>
+      ${segments.map((sg,i)=>{
+        const min=sg.duration?Math.ceil(sg.duration/60):null;
+        const km=sg.distance?(sg.distance/1000).toFixed(1):null;
+        const isLast=i===segments.length-1;
+        return `<div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:6px;padding:5px 8px;border-radius:6px;background:${isLast?'rgba(0,122,255,.05)':'transparent'};align-items:center">
+          <span style="font-size:11px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${sg.fromName}">${sg.fromName}</span>
+          <span style="font-size:11px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${sg.toName}">${sg.toName}</span>
+          <span style="font-size:12px;font-weight:700;text-align:right;white-space:nowrap;color:${min>10?'#FF9500':'var(--txt)'}">${min?min+'분':'—'}</span>
+          <span style="font-size:11px;text-align:right;color:var(--mut);white-space:nowrap">${km?km+'km':'—'}</span>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="margin-top:10px;font-size:10px;color:var(--dim)">* 캐시된 구간은 재API 호출 없이 빠르게 표시됩니다. 캐시 초기화: <button onclick="localStorage.removeItem('route_time_cache');alert('캐시 초기화 완료')" style="border:none;background:none;color:var(--acc);font-size:10px;cursor:pointer;text-decoration:underline">초기화</button></div>
+  `;
+
+  el.innerHTML=html;
 }
 
 // ── 호차 폐지 모달 ──
